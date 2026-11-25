@@ -736,11 +736,14 @@ def daily_report():
     balances = state_manager.record_daily_balance(state, now.date().isoformat())
     prev = balances["previous"]
     delta = state.total_net_worth - prev[1] if prev else 0
+    bank_delta = state.hysa_balance - prev[2] if prev else 0
     metrics = state_manager.wealth_metrics(state)
     profile = state_manager.get_profile()
     lines = [f"WealthOS Daily Brief — {now:%A, %d %B %Y} ({timezone_name})",
              f"Hello {profile.get('display_name') or 'there'}.",
              f"Current balance/net worth: {naira(state.total_net_worth)}",
+             f"Bank cash balance (opening for this report): {naira(state.hysa_balance)}",
+             f"Bank cash change since previous report: {naira(bank_delta)}",
              f"Previous reported close: {naira(prev[2]) if prev else 'No prior daily close'}",
              f"Change since previous report: {naira(delta)}",
              f"Verified account income this month: {naira(metrics['received_month'])}",
