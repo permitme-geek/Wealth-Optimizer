@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from state.manager import FinancialState, StateManager
@@ -50,6 +51,18 @@ class WealthProgressTests(unittest.TestCase):
         metrics = self.manager.wealth_metrics()
         self.assertEqual(metrics["received_total"], 0)
         self.assertEqual(metrics["sales_received"], 0)
+
+    def test_daily_revenue_kpi_is_3_5_percent_of_monthly_goal(self):
+        previous = os.environ.get("MONTHLY_INCOME_TARGET")
+        os.environ["MONTHLY_INCOME_TARGET"] = "1000000"
+        try:
+            metrics = self.manager.wealth_metrics(FinancialState())
+            self.assertEqual(metrics["daily_revenue_target"], 35_000)
+        finally:
+            if previous is None:
+                os.environ.pop("MONTHLY_INCOME_TARGET", None)
+            else:
+                os.environ["MONTHLY_INCOME_TARGET"] = previous
 
 
 if __name__ == "__main__":

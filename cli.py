@@ -106,37 +106,52 @@ def seed(
 
 @app.command()
 def setup():
-    """Personalize WealthOS, configure optional account connectors, KPIs and goals."""
+    """Start with a wealth assessment, then personalize only the missing targets and data."""
     from state.manager import state_manager, FinancialState
-    console.print(Panel("Set up your profile, financial baseline, goals and optional integrations.", title="WealthOS First Run"))
-    display_name = typer.prompt("Name for reports", default="User")
+    from config import settings
+    current = state_manager.get()
+    metrics = state_manager.wealth_metrics(current)
+    console.print(Panel(
+        f"Current net worth: {naira(current.total_net_worth)}\n"
+        f"Monthly cash flow: {naira(current.monthly_surplus)} surplus\n"
+        f"Verified sales earnings: {naira(metrics['net_realised'])}\n"
+        f"Current rating: {metrics['rating']}/100\n"
+        "First recommendation: convert one existing skill or offer into a priced customer outcome and track credited revenue.",
+        title="Wealth Intelligence — Your Starting Position"))
+    display_name = typer.prompt("Name for reports", default=state_manager.get_profile().get("display_name") or "User")
     timezone_name = typer.prompt("Report timezone", default="Africa/Lagos")
     try:
         ZoneInfo(timezone_name)
     except Exception as exc:
         raise typer.BadParameter("Enter a valid IANA timezone such as Africa/Lagos") from exc
-    income = typer.prompt("Monthly income baseline (NGN)", type=float, default=0.0)
-    expenses = typer.prompt("Monthly expense baseline (NGN)", type=float, default=0.0)
-    hysa = typer.prompt("Bank cash balance (NGN)", type=float, default=0.0)
-    equities = typer.prompt("Equities value (NGN)", type=float, default=0.0)
-    bonds = typer.prompt("Bonds value (NGN)", type=float, default=0.0)
-    mkt = typer.prompt("Money market/T-bills value (NGN)", type=float, default=0.0)
-    other = typer.prompt("Other assets (NGN)", type=float, default=0.0)
-    wealth_goal = typer.prompt("Net-worth goal (NGN)", type=float, default=50_000_000.0)
-    target_monthly_income = typer.prompt("Target monthly income KPI (NGN)", type=float, default=income)
-    skills = typer.prompt("Skills you can sell", default="")
-    offers = typer.prompt("Products/services you can offer", default="")
-    customers = typer.prompt("Target customers", default="")
-    pricing = typer.prompt("Pricing/cost constraints", default="")
-    resources = typer.prompt("Useful resources and available time", default="")
-    channels = typer.prompt("Preferred customer channels", default="")
-    mono_key = typer.prompt("Mono secret key (blank to configure later)", default="", hide_input=True)
-    mono_id = typer.prompt("Mono account ID (blank to configure later)", default="")
-    paystack_key = typer.prompt("Paystack secret key (blank to configure later)", default="", hide_input=True)
-    email_to = typer.prompt("Email for daily reports (blank disables email)", default="")
+    income = typer.prompt("Monthly income baseline (NGN)", type=float, default=current.monthly_income_avg)
+    expenses = typer.prompt("Monthly expense baseline (NGN)", type=float, default=current.monthly_expense_avg)
+    hysa, equities, bonds = current.hysa_balance, current.equities_value, current.bonds_value
+    mkt, other = current.money_market_value, current.other_assets_value
+    if not settings.mono_configured:
+        hysa = typer.prompt("Current bank cash balance (NGN; enter 0 if connecting account instead)", type=float, default=current.hysa_balance)
+        investments = typer.prompt("Total investments and other assets, combined (NGN)", type=float,
+            default=current.equities_value + current.bonds_value + current.money_market_value + current.other_assets_value)
+        equities = bonds = mkt = 0.0
+        other = investments
+    wealth_goal = typer.prompt("Net-worth goal (NGN)", type=float, default=float(os.getenv("WEALTH_GOAL", "50000000")))
+    target_monthly_income = typer.prompt("Monthly revenue target (NGN)", type=float,
+        default=float(os.getenv("MONTHLY_INCOME_TARGET", str(max(income, 1)))))
+    console.print(f"[cyan]Daily revenue KPI: {naira(target_monthly_income * 0.035)} (3.5% of monthly revenue target).[/cyan]")
+    prior_profile = state_manager.get_profile()
+    skills = typer.prompt("Skills you can sell (optional)", default=prior_profile["skills"])
+    offers = typer.prompt("Products/services to sell (optional)", default=prior_profile["offers"])
+    customers = typer.prompt("Target customers (optional)", default=prior_profile["target_customers"])
+    pricing = typer.prompt("Pricing/cost constraints (optional)", default=prior_profile["pricing_notes"])
+    resources = typer.prompt("Useful resources / weekly hours (optional)", default=prior_profile["resources"])
+    channels = typer.prompt("Preferred customer channels (optional)", default=prior_profile["preferred_channels"])
+    mono_key = typer.prompt("Mono secret key (leave blank to keep current)", default="", hide_input=True) if not settings.mono_configured else ""
+    mono_id = typer.prompt("Mono account ID (leave blank to keep current)", default="") if not settings.mono_configured else ""
+    paystack_key = typer.prompt("Paystack secret key (leave blank to keep current)", default="", hide_input=True) if not settings.paystack_configured else ""
+    email_to = typer.prompt("Daily report email (optional; leave blank to keep current)", default=os.getenv("REPORT_EMAIL_TO", ""))
     smtp_host = smtp_user = smtp_password = ""
     smtp_port = "587"
-    if email_to:
+    if email_to and not os.getenv("SMTP_HOST"):
         smtp_host = typer.prompt("SMTP host")
         smtp_port = str(typer.prompt("SMTP port", type=int, default=587))
         smtp_user = typer.prompt("SMTP username", default="")
@@ -156,7 +171,7 @@ def setup():
         target_customers=customers, pricing_notes=pricing, resources=resources,
         available_hours=0, preferred_channels=channels)
     state_manager.add_goal("Net worth target", wealth_goal, "")
-    console.print("[green]Setup saved. Configure the 8 AM report with `python cli.py daily-schedule`.\n"
+    console.print("[green]Setup saved. Start the 8 AM wealth intelligence cycle with `python cli.py daily-schedule`.\n"
                   "Credentials are stored in the local .env file with owner-only permissions.[/green]")
 
 
@@ -747,6 +762,8 @@ def daily_report():
              f"Previous reported close: {naira(prev[2]) if prev else 'No prior daily close'}",
              f"Change since previous report: {naira(delta)}",
              f"Verified account income this month: {naira(metrics['received_month'])}",
+             f"Today's verified revenue: {naira(metrics['daily_received'])} / {naira(metrics['daily_revenue_target'])} target (3.5% of monthly KPI)",
+             f"Monthly revenue target progress: {naira(metrics['received_month'])} / {naira(metrics['monthly_revenue_target'])}",
              f"Net realised sales earnings: {naira(metrics['net_realised'])}",
              f"Outstanding receivables (separate): {naira(metrics['outstanding'])}",
              f"Wealth rating: {metrics['rating']}/100", "Sync: " + ("; ".join(sync_messages) or "No connectors configured")]
@@ -758,11 +775,14 @@ def daily_report():
             lines.append(f"- {goal['goal']}: target {naira(goal['target_amount'])}; remaining {naira(gap)}; due {goal['target_date'] or 'no date'}")
     active = [o for o in metrics["opportunities"] if o["status"] not in {"won", "lost", "refunded"}]
     lines.append("Today's optimized actions:")
+    daily_gap = max(metrics["daily_revenue_target"] - metrics["daily_received"], 0)
+    if metrics["daily_revenue_target"]:
+        lines.append(f"- Daily target gap: {naira(daily_gap)} to reach 3.5% of the monthly revenue goal.")
     if active:
         active.sort(key=lambda o: (o["next_follow_up"] or "9999-99-99", -o["quoted_amount"]))
         lines.extend(f"- Follow up #{o['id']} with {o['customer']} about {o['offer']} ({naira(o['quoted_amount'])}); resolve their main objection and set a decision date." for o in active[:3])
     elif profile.get("offers") or profile.get("skills"):
-        lines.append(f"- Offer {profile['offers'] or profile['skills']} to {profile.get('target_customers') or 'a focused buyer segment'} through {profile.get('preferred_channels') or 'your strongest channel'}; make one specific paid offer and log the result.")
+        lines.append(f"- Offer {profile['offers'] or profile['skills']} to {profile.get('target_customers') or 'a focused buyer segment'} through {profile.get('preferred_channels') or 'your strongest channel'}; pursue sales totaling {naira(daily_gap)} and log each result.")
     else:
         lines.append("- Complete `python cli.py wealth-profile` and add one concrete offer and buyer segment.")
     brief = "\n".join(lines)
@@ -847,6 +867,9 @@ def wealth():
         Panel(naira(m["outstanding"]), title="Outstanding receivables", border_style="yellow"),
         Panel(naira(m["pipeline_value"]), title="Unclosed quoted pipeline", border_style="magenta"),
     ]))
+    console.print(f"Daily revenue KPI: {naira(m['daily_revenue_target'])} (3.5% of monthly target); "
+                  f"verified today: {naira(m['daily_received'])}; "
+                  f"monthly target progress: {naira(m['received_month'])} / {naira(m['monthly_revenue_target'])}.\n")
     close_rate = m["conversion_rate"]
     rating = m["rating"]
     console.print(Panel(

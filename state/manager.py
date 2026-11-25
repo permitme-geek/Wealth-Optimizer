@@ -10,6 +10,10 @@ from typing import Optional
 import json, sqlite3, os
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 @dataclass
@@ -482,7 +486,8 @@ class StateManager:
         state = state or self.get()
         baseline = self.ensure_baseline(state)
         opportunities = self.list_opportunities()
-        today = datetime.now(timezone.utc).date()
+        timezone_name = os.getenv("WEALTHOS_TIMEZONE", "Africa/Lagos")
+        today = datetime.now(ZoneInfo(timezone_name)).date()
         month_start = today.replace(day=1).isoformat()
         with sqlite3.connect(self.DB_PATH) as conn:
             verified_income = conn.execute("""SELECT amount, date FROM transactions
@@ -491,6 +496,8 @@ class StateManager:
             sales_receipts = conn.execute("SELECT amount, payment_date FROM verified_receipts").fetchall()
         received_month = sum(amount for amount, dt in verified_income if dt >= month_start)
         received_total = sum(amount for amount, _ in verified_income)
+        daily_received = sum(amount for amount, dt in verified_income if dt == today.isoformat())
+        monthly_revenue_target = float(os.getenv("MONTHLY_INCOME_TARGET", "0") or 0)
         sales_received = sum(amount for amount, _ in sales_receipts)
         with sqlite3.connect(self.DB_PATH) as conn:
             refunds, costs = conn.execute("""SELECT
@@ -514,6 +521,9 @@ class StateManager:
                 (today.isoformat(),)).fetchone()[0]
         metrics = {"baseline": baseline, "received_month": received_month,
                 "received_total": received_total, "sales_received": sales_received,
+                "daily_received": daily_received,
+                "daily_revenue_target": monthly_revenue_target * 0.035,
+                "monthly_revenue_target": monthly_revenue_target,
                 "refunds": refunds, "costs": costs,
                 "net_realised": sales_received - refunds - costs,
                 "outstanding": outstanding,
