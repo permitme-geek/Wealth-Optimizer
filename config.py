@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     # ── Paystack ──────────────────────────────────────────────
     paystack_secret_key: str = Field(default="", description="Paystack secret key")
 
+    # ── WhatsApp Business Cloud API ───────────────────────────
+    whatsapp_access_token: str = Field(default="", description="Meta WhatsApp Cloud API token")
+    whatsapp_phone_number_id: str = Field(default="", description="WhatsApp Business phone number ID")
+    whatsapp_business_account_id: str = Field(default="", description="WhatsApp Business Account ID")
+    whatsapp_api_version: str = "v27.0"
+
     # ── Personal financial parameters ─────────────────────────
     hysa_yield_rate: float           = 0.105
     monthly_income_estimate: float   = 850_000.0
@@ -41,6 +47,10 @@ class Settings(BaseSettings):
     @property
     def paystack_configured(self) -> bool:
         return bool(self.paystack_secret_key)
+
+    @property
+    def whatsapp_configured(self) -> bool:
+        return bool(self.whatsapp_access_token and self.whatsapp_phone_number_id)
 
 
 # Singleton — import this everywhere

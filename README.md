@@ -40,6 +40,8 @@ python cli.py lead-inbox       # review leads and draft status
 python cli.py lead-draft 1     # prepare an unsent personalized draft
 python cli.py lead-approve 1   # approve a draft for manual sending
 python cli.py lead-followups   # review due follow-ups
+python cli.py whatsapp-setup   # save WhatsApp Cloud API credentials securely
+python cli.py whatsapp-test    # validate the business phone-number connection
 python cli.py receipt-candidates # list Paystack inflows eligible for receipt matching
 python cli.py goal-add         # add a measurable wealth goal
 python -m unittest discover -s tests -v

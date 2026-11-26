@@ -147,6 +147,44 @@ def email_test():
     console.print(f"[green]Test email sent to {recipient}.[/green]")
 
 
+@app.command("whatsapp-setup")
+def whatsapp_setup():
+    """Save WhatsApp Cloud API credentials locally, then validate the phone-number ID."""
+    token = typer.prompt("Meta WhatsApp access token", hide_input=True, confirmation_prompt=True)
+    phone_id = typer.prompt("WhatsApp Business phone-number ID")
+    business_id = typer.prompt("WhatsApp Business Account ID (WABA ID)")
+    if not token.strip() or not phone_id.strip() or not business_id.strip():
+        raise typer.BadParameter("Access token, phone-number ID and WABA ID are required")
+    version = os.getenv("WHATSAPP_API_VERSION", "v27.0")
+    _write_env_values({"WHATSAPP_ACCESS_TOKEN": token.strip(),
+        "WHATSAPP_PHONE_NUMBER_ID": phone_id.strip(),
+        "WHATSAPP_BUSINESS_ACCOUNT_ID": business_id.strip(),
+        "WHATSAPP_API_VERSION": version})
+    console.print("[green]WhatsApp credentials saved locally. Run `python cli.py whatsapp-test` to validate the connection.[/green]")
+
+
+@app.command("whatsapp-test")
+def whatsapp_test():
+    """Check the configured WhatsApp phone-number connection without messaging anyone."""
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+    from config import settings
+    from connectors.whatsapp import WhatsAppCloudAPI
+    if not settings.whatsapp_configured:
+        raise typer.BadParameter("Run `python cli.py whatsapp-setup` first")
+    try:
+        info = WhatsAppCloudAPI().get_phone_number()
+    except Exception as exc:
+        raise typer.BadParameter(f"WhatsApp connection check failed: {exc}") from exc
+    console.print(Panel(
+        f"Phone: {info.get('display_phone_number', 'unavailable')}\n"
+        f"Verified business name: {info.get('verified_name', 'unavailable')}\n"
+        f"Quality: {info.get('quality_rating', 'unavailable')}\n"
+        f"Platform: {info.get('platform_type', 'unavailable')}\n"
+        "Connection validated. No customer message was sent.",
+        title="WhatsApp Business Connected", border_style="green"))
+
+
 @app.command()
 def setup():
     """Start with a wealth assessment, then personalize only the missing targets and data."""

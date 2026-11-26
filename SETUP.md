@@ -25,6 +25,17 @@ python cli.py wealth
 python cli.py receipt-candidates
 ```
 
+## WhatsApp Business connection
+
+WealthOS connects through Meta's WhatsApp Cloud API. In the Meta App Dashboard, create an app with the WhatsApp use case, connect the WhatsApp Business account, and obtain the business phone-number ID and WABA ID. Generate a permanent system-user access token with `whatsapp_business_messaging` and `whatsapp_business_management` permissions. Meta also provides a temporary test number and token during initial setup; use a permanent token for an ongoing connection. Then run:
+
+```bash
+python cli.py whatsapp-setup
+python cli.py whatsapp-test
+```
+
+The access token is entered hidden and saved in `.env` with owner-only permissions. The test command only reads the configured business phone-number details; it does not send a customer message. Outbound messages are not enabled in this connection step. Non-template messages are limited to an open 24-hour customer-service window after a customer message; proactive outreach requires an approved message template. Receiving replies also needs a public HTTPS webhook, which is the next integration step.
+
 Enable email notifications without repeating the full onboarding flow:
 
 ```bash
