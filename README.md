@@ -22,7 +22,7 @@ python cli.py daily-report
 
 ## What to expect tomorrow
 
-The macOS LaunchAgent is installed and loaded. Its first scheduled run is **Thursday, 26 November 2026 at 8:00 AM Africa/Lagos time**. It will attempt configured Mono and Paystack syncs, record the day's bank cash and net worth, compare them with the **25 November 2026** snapshot, calculate verified revenue against the daily and monthly targets, and print the day's recommended actions.
+The macOS LaunchAgent is installed and loaded. It runs daily at 8:00 AM, syncs Paystack, records the day's balance and net worth, compares them with the previous snapshot, calculates successful inflows against the daily and monthly targets, and speaks the recommended next action.
 
 The brief will append to `reports/daily.log`; if SMTP details are configured, it will also email the same brief. The scheduler is currently loaded and waiting for its calendar trigger. The Mac must be awake and the user session available at the scheduled time for a LaunchAgent to run. Check `reports/scheduler-error.log` if the run fails, and `reports/scheduler.log` for scheduler output.
 
@@ -35,9 +35,11 @@ python cli.py daily-report     # run and record the daily brief now
 python cli.py daily-schedule   # install or reload the 8:00 AM LaunchAgent
 python cli.py sales-add        # add a prospect or sales opportunity
 python cli.py sales-list       # inspect the sales pipeline
-python cli.py receipt-candidates # list synced bank credits eligible for receipt matching
+python cli.py receipt-candidates # list Paystack inflows eligible for receipt matching
 python cli.py goal-add         # add a measurable wealth goal
 python -m unittest discover -s tests -v
 ```
 
-Daily income counts only supported credits found in synced Mono account transactions; transfers and Paystack-only payment confirmations are not treated as credited income. Sales receipts must match a synced bank transaction reference and amount.
+Daily app-related inflows count successful Paystack business payments. Sales receipts must match an imported Paystack transaction reference and amount. Paystack success records do not independently establish later bank settlement.
+
+Re-enter or replace the Paystack key with `python cli.py paystack-setup`; input is hidden and the key is not printed. Mono authentication and connector files have been removed.

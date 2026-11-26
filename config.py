@@ -14,10 +14,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Mono (Wema Bank) ──────────────────────────────────────
-    mono_secret_key: str  = Field(default="", description="Mono API secret key")
-    mono_account_id: str  = Field(default="", description="Mono linked account ID")
-
     # ── Paystack ──────────────────────────────────────────────
     paystack_secret_key: str = Field(default="", description="Paystack secret key")
 
@@ -41,10 +37,6 @@ class Settings(BaseSettings):
 
     # ── System ────────────────────────────────────────────────
     database_url: str = "sqlite:///wealthos.db"
-
-    @property
-    def mono_configured(self) -> bool:
-        return bool(self.mono_secret_key and self.mono_account_id)
 
     @property
     def paystack_configured(self) -> bool:

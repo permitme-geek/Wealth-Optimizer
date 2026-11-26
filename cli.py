@@ -5,7 +5,7 @@ Your daily wealth optimization terminal.
 
 Usage:
   python cli.py seed          # First run: load your numbers into the database
-  python cli.py sync          # Pull live data from Mono + Paystack
+  python cli.py sync          # Pull successful Paystack payment inflows
   python cli.py status        # Show current portfolio snapshot
   python cli.py optimize      # Run full optimization + recommendations
   python cli.py project       # Run 10,000-path Monte Carlo projection
@@ -104,11 +104,20 @@ def seed(
     ))
 
 
+@app.command("paystack-setup")
+def paystack_setup():
+    """Replace the Paystack secret key using hidden terminal input."""
+    key = typer.prompt("Enter the new Paystack secret key", hide_input=True, confirmation_prompt=True)
+    if not key.strip():
+        raise typer.BadParameter("A Paystack secret key is required")
+    _write_env_values({"PAYSTACK_SECRET_KEY": key.strip()})
+    console.print("[green]Paystack key saved locally. Run `python cli.py sync` to validate it and import successful payments.[/green]")
+
+
 @app.command()
 def setup():
     """Start with a wealth assessment, then personalize only the missing targets and data."""
     from state.manager import state_manager, FinancialState
-    from config import settings
     current = state_manager.get()
     metrics = state_manager.wealth_metrics(current)
     console.print(Panel(
@@ -126,14 +135,11 @@ def setup():
         raise typer.BadParameter("Enter a valid IANA timezone such as Africa/Lagos") from exc
     income = typer.prompt("Monthly income baseline (NGN)", type=float, default=current.monthly_income_avg)
     expenses = typer.prompt("Monthly expense baseline (NGN)", type=float, default=current.monthly_expense_avg)
-    hysa, equities, bonds = current.hysa_balance, current.equities_value, current.bonds_value
-    mkt, other = current.money_market_value, current.other_assets_value
-    if not settings.mono_configured:
-        hysa = typer.prompt("Current bank cash balance (NGN; enter 0 if connecting account instead)", type=float, default=current.hysa_balance)
-        investments = typer.prompt("Total investments and other assets, combined (NGN)", type=float,
-            default=current.equities_value + current.bonds_value + current.money_market_value + current.other_assets_value)
-        equities = bonds = mkt = 0.0
-        other = investments
+    hysa = typer.prompt("Current cash balance (optional; NGN)", type=float, default=current.hysa_balance)
+    investments = typer.prompt("Total investments and other assets (NGN)", type=float,
+        default=current.equities_value + current.bonds_value + current.money_market_value + current.other_assets_value)
+    equities = bonds = mkt = 0.0
+    other = investments
     wealth_goal = typer.prompt("Net-worth goal (NGN)", type=float, default=float(os.getenv("WEALTH_GOAL", "50000000")))
     target_monthly_income = typer.prompt("Monthly revenue target (NGN)", type=float,
         default=float(os.getenv("MONTHLY_INCOME_TARGET", str(max(income, 1)))))
@@ -145,9 +151,9 @@ def setup():
     pricing = typer.prompt("Pricing/cost constraints (optional)", default=prior_profile["pricing_notes"])
     resources = typer.prompt("Useful resources / weekly hours (optional)", default=prior_profile["resources"])
     channels = typer.prompt("Preferred customer channels (optional)", default=prior_profile["preferred_channels"])
-    mono_key = typer.prompt("Mono secret key (leave blank to keep current)", default="", hide_input=True) if not settings.mono_configured else ""
-    mono_id = typer.prompt("Mono account ID (leave blank to keep current)", default="") if not settings.mono_configured else ""
-    paystack_key = typer.prompt("Paystack secret key (leave blank to keep current)", default="", hide_input=True) if not settings.paystack_configured else ""
+    paystack_key = os.getenv("PAYSTACK_SECRET_KEY", "")
+    if not paystack_key:
+        paystack_key = typer.prompt("Paystack secret key (hidden input)", default="", hide_input=True)
     email_to = typer.prompt("Daily report email (optional; leave blank to keep current)", default=os.getenv("REPORT_EMAIL_TO", ""))
     smtp_host = smtp_user = smtp_password = ""
     smtp_port = "587"
@@ -158,8 +164,7 @@ def setup():
         smtp_password = typer.prompt("SMTP password/app password", default="", hide_input=True)
     env_values = {"WEALTHOS_TIMEZONE": timezone_name,
         "WEALTH_GOAL": str(wealth_goal), "MONTHLY_INCOME_TARGET": str(target_monthly_income)}
-    env_values.update({k: v for k, v in {"MONO_SECRET_KEY": mono_key, "MONO_ACCOUNT_ID": mono_id,
-        "PAYSTACK_SECRET_KEY": paystack_key, "REPORT_EMAIL_TO": email_to,
+    env_values.update({k: v for k, v in {"PAYSTACK_SECRET_KEY": paystack_key, "REPORT_EMAIL_TO": email_to,
         "SMTP_HOST": smtp_host, "SMTP_PORT": smtp_port, "SMTP_USERNAME": smtp_user,
         "SMTP_PASSWORD": smtp_password}.items() if v})
     _write_env_values(env_values)
@@ -178,32 +183,11 @@ def setup():
 # ── sync command ──────────────────────────────────────────────
 @app.command()
 def sync():
-    """Pull live data from Mono (Wema Bank) and Paystack. Requires API keys in .env"""
-    from connectors.mono     import sync_mono
+    """Pull successful Paystack payment inflows. Requires PAYSTACK_SECRET_KEY in .env."""
     from connectors.paystack import sync_paystack
     from config import settings
 
     console.print("\n[bold cyan]WealthOS Sync[/bold cyan]\n")
-
-    # Mono
-    if settings.mono_configured:
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-                      console=console, transient=True) as p:
-            p.add_task("Connecting to Wema Bank via Mono…", total=None)
-            result = sync_mono()
-
-        if result["success"]:
-            console.print(
-                f"[green]✓ Mono[/green] — {result['institution']} "
-                f"| Balance: [bold]{naira(result['balance'])}[/bold] "
-                f"| +{result['new_txns']} new transactions"
-            )
-        else:
-            console.print(f"[red]✗ Mono[/red] — {result['error']}")
-    else:
-        console.print("[yellow]⚠ Mono not configured — add MONO_SECRET_KEY + MONO_ACCOUNT_ID to .env[/yellow]")
-
-    # Paystack
     if settings.paystack_configured:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
                       console=console, transient=True) as p:
@@ -659,7 +643,7 @@ def receipt_candidates():
         table.add_row(str(row["id"]), row["date"], row["source"], row["narration"], naira(row["amount"]))
     console.print(table)
     if not rows:
-        console.print("No unlinked designated-account business credits. Sync Mono and check the account transaction category.")
+        console.print("No unlinked successful Paystack business payments. Configure your Paystack key and run `python cli.py sync`.")
 
 
 @app.command("sales-adjust")
@@ -724,7 +708,7 @@ def goal_add(goal: str = typer.Option(..., prompt=True),
 
 @app.command("daily-report")
 def daily_report():
-    """Sync available accounts, compare today's balance with the prior report and issue next actions."""
+    """Sync Paystack inflows, compare today's balance with the prior report and issue next actions."""
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
     from state.manager import state_manager
@@ -734,17 +718,12 @@ def daily_report():
     # Sync first so the opening balance reflects the latest available account data.
     sync_messages = []
     try:
-        from connectors.mono import sync_mono
-        if settings.mono_configured:
-            result = sync_mono(verbose=False)
-            sync_messages.append(f"Mono sync: {'ok' if result['success'] else result.get('error', 'failed')}")
-    except Exception as exc:
-        sync_messages.append(f"Mono sync failed: {exc}")
-    try:
         from connectors.paystack import sync_paystack
         if settings.paystack_configured:
             result = sync_paystack(verbose=False)
             sync_messages.append(f"Paystack sync: {'ok' if result['success'] else result.get('error', 'failed')}")
+        else:
+            sync_messages.append("Paystack not configured; run `python cli.py paystack-setup`")
     except Exception as exc:
         sync_messages.append(f"Paystack sync failed: {exc}")
     state = state_manager.get()
@@ -834,7 +813,7 @@ def _daily_voice_prompt(name: str, daily_received: float, daily_target: float,
                f"{daily_target:,.0f} naira target, {achieved:.0%} achieved. "
                f"Your next priority is: {action}.")
     if sync_failed:
-        message += " Account sync needs attention. Check your Mono account ID and Paystack API key before acting on stale figures."
+        message += " Paystack sync needs attention. Check your Paystack API key before acting on stale figures."
     return message
 
 
@@ -912,7 +891,7 @@ def wealth():
         f"closed-sale conversion {pct(close_rate)}.  Portfolio change from baseline: {naira(m['net_worth_change'])}.\n" +
         "Rating components: " + ", ".join(f"{k.replace('_',' ')} {v:.0f}" for k, v in m["rating_breakdown"].items()),
         title="Wealth outcome rating", border_style="green" if rating >= 60 else "yellow"))
-    console.print("[dim]Verified income comes from synced Mono account salary, business-income, other-income and interest credits; transfers and Paystack-only confirmations are excluded until bank credited. Net realised sales earnings use linked account receipts less recorded refunds and costs. Quotes, promises and receivables are excluded.[/dim]\n")
+    console.print("[dim]Verified inflows are successful Paystack business payments. Transfers, failed charges, quotes, promises and receivables are excluded. Net realised sales earnings use linked successful payments less recorded refunds and costs.[/dim]\n")
     console.print(f"Sales activity: {m['activity_count']} logged actions; {m['followup_count']} follow-up events; "
                   f"{m['followups_due']} follow-ups due. View details with `sales-history <id>`.\n")
 

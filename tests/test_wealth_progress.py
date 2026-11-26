@@ -40,7 +40,7 @@ class WealthProgressTests(unittest.TestCase):
     def test_receipt_requires_matching_synced_business_credit(self):
         opportunity = self.manager.add_opportunity(customer="Buyer", offer="Service", quoted_amount=500)
         self.manager.save_transactions([{"id": "txn-1", "amount": 500, "type": "credit",
-            "date": "2026-01-01", "source": "mono", "category": "business_income"}])
+            "date": "2026-01-01", "source": "paystack", "category": "business_income"}])
         self.manager.record_receipt(opportunity, 500, "txn-1")
         self.assertEqual(self.manager.wealth_metrics()["sales_received"], 500)
         with self.assertRaises(ValueError):
@@ -48,7 +48,7 @@ class WealthProgressTests(unittest.TestCase):
 
     def test_transfer_is_not_verified_income_or_sales(self):
         self.manager.save_transactions([{"id": "txn-transfer", "amount": 900, "type": "credit",
-            "date": "2026-01-01", "source": "mono", "category": "transfer_in"}])
+            "date": "2026-01-01", "source": "paystack", "category": "transfer_in"}])
         metrics = self.manager.wealth_metrics()
         self.assertEqual(metrics["received_total"], 0)
         self.assertEqual(metrics["sales_received"], 0)
@@ -69,7 +69,7 @@ class WealthProgressTests(unittest.TestCase):
         prompt = _daily_voice_prompt("Ayo", 17_500, 35_000, "follow up with a buyer", True)
         self.assertIn("50% achieved", prompt)
         self.assertIn("follow up with a buyer", prompt)
-        self.assertIn("Account sync needs attention", prompt)
+        self.assertIn("Paystack sync needs attention", prompt)
 
 
 if __name__ == "__main__":

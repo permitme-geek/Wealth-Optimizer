@@ -32,8 +32,7 @@ class FinancialState:
 
     # ── Metadata ───────────────────────────────────────────────
     last_synced:           Optional[str] = None   # ISO timestamp
-    data_source:           str = "manual"         # "mono" | "paystack" | "manual"
-    mono_account_id:       str = ""
+    data_source:           str = "manual"         # "paystack" | "manual"
 
     # ── Computed (not stored, derived on access) ───────────────
     @property
@@ -226,6 +225,10 @@ class StateManager:
             ).fetchone()
         if row:
             data = json.loads(row[0])
+            # Drop fields from previous Mono-based state snapshots during migration.
+            data.pop("mono_account_id", None)
+            if data.get("data_source") == "mono":
+                data["data_source"] = "manual"
             return FinancialState(**data)
         return FinancialState()
 
@@ -259,7 +262,7 @@ class StateManager:
                         "INSERT INTO transactions VALUES (?,?,?,?,?,?,?)",
                         (t["id"], t["amount"], t["type"],
                          t.get("narration",""), t["date"],
-                         t.get("source","mono"), t.get("category",""))
+                         t.get("source","paystack"), t.get("category",""))
                     )
                     new_count += 1
                 except sqlite3.IntegrityError:
@@ -281,7 +284,7 @@ class StateManager:
             rows = conn.execute("""SELECT t.* FROM transactions t
                 LEFT JOIN verified_receipts r ON r.transaction_reference=t.id
                 WHERE t.txn_type='credit' AND t.category='business_income'
-                  AND t.source='mono' AND r.id IS NULL
+                  AND t.source='paystack' AND r.id IS NULL
                 ORDER BY t.date DESC LIMIT ?""", (limit,)).fetchall()
         return [dict(r) for r in rows]
 
@@ -391,8 +394,8 @@ class StateManager:
                                (reference.strip(),)).fetchone()
             if txn is None:
                 raise ValueError("Transaction reference was not found in synced account/payment transactions")
-            if txn[1] != "credit" or txn[3] != "business_income" or txn[2] != "mono":
-                raise ValueError("Only synced Mono business-income credits in the designated bank account can verify a sales receipt")
+            if txn[1] != "credit" or txn[3] != "business_income" or txn[2] != "paystack":
+                raise ValueError("Only successful synced Paystack business-income payments can verify a sales receipt")
             if abs(float(txn[0]) - amount) > 0.01:
                 raise ValueError(f"Receipt amount must match the synced transaction ({txn[0]:,.2f} NGN)")
             paid_date = txn[4]
@@ -491,8 +494,8 @@ class StateManager:
         month_start = today.replace(day=1).isoformat()
         with sqlite3.connect(self.DB_PATH) as conn:
             verified_income = conn.execute("""SELECT amount, date FROM transactions
-                WHERE txn_type='credit' AND category IN ('salary','business_income','income_other','interest')
-                  AND source='mono'""").fetchall()
+                WHERE txn_type='credit' AND category='business_income'
+                  AND source='paystack'""").fetchall()
             sales_receipts = conn.execute("SELECT amount, payment_date FROM verified_receipts").fetchall()
         received_month = sum(amount for amount, dt in verified_income if dt >= month_start)
         received_total = sum(amount for amount, _ in verified_income)
