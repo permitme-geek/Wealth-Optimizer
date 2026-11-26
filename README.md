@@ -35,6 +35,11 @@ python cli.py daily-report     # run and record the daily brief now
 python cli.py daily-schedule   # install or reload the 8:00 AM LaunchAgent
 python cli.py sales-add        # add a prospect or sales opportunity
 python cli.py sales-list       # inspect the sales pipeline
+python cli.py lead-add         # add a traveller enquiry
+python cli.py lead-inbox       # review leads and draft status
+python cli.py lead-draft 1     # prepare an unsent personalized draft
+python cli.py lead-approve 1   # approve a draft for manual sending
+python cli.py lead-followups   # review due follow-ups
 python cli.py receipt-candidates # list Paystack inflows eligible for receipt matching
 python cli.py goal-add         # add a measurable wealth goal
 python -m unittest discover -s tests -v

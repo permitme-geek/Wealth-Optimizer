@@ -729,6 +729,145 @@ def sales_history(opportunity_id: int = typer.Argument(...)):
     console.print(table)
 
 
+@app.command("lead-add")
+def lead_add(name: str = typer.Option(..., prompt=True),
+             contact: str = typer.Option("", prompt="Contact handle/email/phone", show_default=False),
+             source: str = typer.Option("social media", prompt="Lead source"),
+             channel: str = typer.Option("WhatsApp", prompt="Preferred reply channel"),
+             destination: str = typer.Option("", prompt="Destination", show_default=False),
+             travel_dates: str = typer.Option("", prompt="Travel dates or flexibility", show_default=False),
+             travellers: str = typer.Option("", prompt="Travellers / trip needs", show_default=False),
+             budget: float = typer.Option(0, prompt="Budget range (NGN; optional)", min=0),
+             contact_consent: bool = typer.Option(..., prompt="Has this person asked for information or agreed to be contacted?"),
+             follow_up: str = typer.Option("", prompt="Next follow-up date (YYYY-MM-DD)", show_default=False)):
+    """Add a traveller enquiry to the lead inbox."""
+    from state.manager import state_manager
+    lead_id = state_manager.add_lead(name=name, contact=contact, source=source,
+        channel=channel, destination=destination, travel_dates=travel_dates,
+        travellers=travellers, budget=budget, contact_consent=contact_consent,
+        next_follow_up=follow_up)
+    console.print(f"[green]Lead #{lead_id} added to the inbox.[/green]")
+    if not contact_consent:
+        console.print("[yellow]Contact permission was not recorded; message drafting is disabled for this lead.[/yellow]")
+
+
+@app.command("lead-inbox")
+def lead_inbox():
+    """View traveller leads, consent, status, draft approval and follow-up date."""
+    from state.manager import state_manager
+    rows = state_manager.list_leads()
+    table = Table(title="Traveller Lead Inbox", box=box.ROUNDED)
+    for col in ("ID", "Traveller", "Trip", "Source", "Status", "Consent", "Draft", "Follow-up"):
+        table.add_column(col)
+    for lead in rows:
+        trip = " ".join(x for x in (lead["destination"], lead["travel_dates"]) if x) or "Details needed"
+        table.add_row(str(lead["id"]), lead["name"], trip, lead["source"], lead["status"],
+            "yes" if lead["contact_consent"] else "no", lead["draft_status"], lead["next_follow_up"] or "—")
+    console.print(table)
+    if not rows:
+        console.print("Inbox is empty. Add enquiries with `python cli.py lead-add`.")
+
+
+@app.command("lead-draft")
+def lead_draft(lead_id: int = typer.Argument(...)):
+    """Create a tailored, unsent travel response draft for an opted-in lead."""
+    from state.manager import state_manager
+    lead = state_manager.get_lead(lead_id)
+    if not lead:
+        raise typer.BadParameter(f"Lead #{lead_id} not found")
+    if not lead["contact_consent"]:
+        raise typer.BadParameter("Record permission to contact before generating an outbound draft")
+    profile = state_manager.get_profile()
+    offer = profile.get("offers") or "accommodation and flight booking options"
+    trip = ", ".join(x for x in (lead["destination"], lead["travel_dates"]) if x)
+    context = f" for {trip}" if trip else ""
+    details = []
+    if lead["travellers"]: details.append(f"travellers/trip needs: {lead['travellers']}")
+    if lead["budget"]: details.append(f"budget guide: {naira(lead['budget'])}")
+    detail_line = (" I have noted " + " and ".join(details) + ".") if details else ""
+    draft = (f"Hi {lead['name']}, thanks for asking us about travel{context}."
+             f"{detail_line} I can help compare suitable stays and flight options through our {offer} service."
+             " What matters most for this trip: lowest total price, flexible changes, location, or travel time?"
+             " Once you confirm, I’ll send a clear quote with what is included and the payment steps.")
+    state_manager.save_lead_draft(lead_id, draft)
+    console.print(Panel(draft, title=f"Draft for {lead['name']} — NOT SENT", border_style="yellow"))
+    console.print("Review it, then run `python cli.py lead-approve " + str(lead_id) + "` to approve.")
+
+
+@app.command("lead-approve")
+def lead_approve(lead_id: int = typer.Argument(...)):
+    """Review and approve a draft; approval does not send the message."""
+    from state.manager import state_manager
+    lead = state_manager.get_lead(lead_id)
+    if not lead:
+        raise typer.BadParameter(f"Lead #{lead_id} not found")
+    console.print(Panel(lead["latest_draft"] or "No draft", title=f"Lead #{lead_id} draft"))
+    if not typer.confirm("Approve this draft for you to send manually?", default=False):
+        console.print("Draft left pending.")
+        return
+    try:
+        state_manager.approve_lead_draft(lead_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print("[green]Approved. Copy and send it through the selected channel; no message was sent by WealthOS.[/green]")
+
+
+@app.command("lead-sent")
+def lead_sent(lead_id: int = typer.Argument(...),
+              follow_up: str = typer.Option("", prompt="Follow-up date (YYYY-MM-DD, blank for none)", show_default=False)):
+    """Record that you manually sent an approved draft and optionally queue follow-up."""
+    from state.manager import state_manager
+    try:
+        state_manager.mark_lead_message_sent(lead_id, follow_up)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print("[green]Manual send recorded. WealthOS did not send the message.[/green]")
+
+
+@app.command("lead-consent")
+def lead_consent(lead_id: int = typer.Argument(...),
+                 allowed: bool = typer.Option(..., prompt="May WealthOS prepare messages for this lead?")):
+    """Record or withdraw permission to draft contact; withdrawal revokes draft approval."""
+    from state.manager import state_manager
+    try:
+        state_manager.set_lead_consent(lead_id, allowed)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print("[green]Lead contact permission updated.[/green]")
+
+
+@app.command("lead-followups")
+def lead_followups():
+    """Show leads with follow-ups due today or overdue."""
+    from state.manager import state_manager
+    timezone_name = os.getenv("WEALTHOS_TIMEZONE", "Africa/Lagos")
+    today = datetime.now(ZoneInfo(timezone_name)).date().isoformat()
+    rows = state_manager.list_leads(due_on=today)
+    table = Table(title=f"Follow-up Queue — due by {today}", box=box.ROUNDED)
+    for col in ("ID", "Traveller", "Destination", "Due", "Stage", "Draft status"):
+        table.add_column(col)
+    for lead in rows:
+        table.add_row(str(lead["id"]), lead["name"], lead["destination"] or "—",
+                      lead["next_follow_up"], lead["status"], lead["draft_status"])
+    console.print(table)
+    if not rows: console.print("No overdue or due follow-ups.")
+
+
+@app.command("lead-log")
+def lead_log(lead_id: int = typer.Argument(...),
+             outcome: str = typer.Option(..., prompt="Contact outcome / note"),
+             status: str = typer.Option(None, help="new, qualified, quoted, booked, lost"),
+             follow_up: str = typer.Option("", prompt="Next follow-up (YYYY-MM-DD, blank to clear)", show_default=False)):
+    """Record a manually completed contact and queue its next follow-up."""
+    from state.manager import state_manager
+    try:
+        state_manager.log_lead_activity(lead_id, "contact_outcome", outcome,
+                                        follow_up, status=status)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]Logged outcome for lead #{lead_id}.[/green]")
+
+
 @app.command("goal-add")
 def goal_add(goal: str = typer.Option(..., prompt=True),
              target_amount: float = typer.Option(0, prompt="Target amount (NGN)", min=0),
@@ -786,6 +925,7 @@ def daily_report():
             gap = max(goal["target_amount"] - state.total_net_worth, 0) if goal["target_amount"] else 0
             lines.append(f"- {goal['goal']}: target {naira(goal['target_amount'])}; remaining {naira(gap)}; due {goal['target_date'] or 'no date'}")
     active = [o for o in metrics["opportunities"] if o["status"] not in {"won", "lost", "refunded"}]
+    due_leads = state_manager.list_leads(due_on=now.date().isoformat())
     lines.append("Today's optimized actions:")
     daily_gap = max(metrics["daily_revenue_target"] - metrics["daily_received"], 0)
     if metrics["daily_revenue_target"]:
@@ -800,6 +940,11 @@ def daily_report():
     else:
         lines.append("- Complete `python cli.py wealth-profile` and add one concrete offer and buyer segment.")
         top_action = "complete your wealth profile and define one concrete paid offer"
+    if due_leads:
+        lines.append("Lead follow-ups due:")
+        lines.extend(f"- Lead #{lead['id']} {lead['name']} ({lead['destination'] or 'trip details pending'}), draft {lead['draft_status']}." for lead in due_leads[:5])
+        if not active:
+            top_action = f"follow up with traveller {due_leads[0]['name']} about {due_leads[0]['destination'] or 'their trip enquiry'}"
     brief = "\n".join(lines)
     console.print(Panel(brief, title="Daily Wealth Brief", border_style="cyan"))
     outdir = Path(__file__).resolve().parent / "reports"

@@ -47,6 +47,8 @@ The daily revenue KPI is 3.5% of the monthly revenue goal. It is a tracking targ
 
 ## Sales trail
 
+Use `lead-add` to capture a traveller enquiry, contact permission and trip requirements. `lead-draft <id>` makes an unsent personalized template; `lead-approve <id>` requires your explicit approval; `lead-sent <id>` records that you sent it manually and queues a follow-up date. Use `lead-inbox` and `lead-followups` to triage the inbox. Drafting is blocked unless permission to contact is recorded. WealthOS does not send messages automatically in this first build.
+
 Create and update sales opportunities with:
 
 ```bash

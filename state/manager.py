@@ -140,6 +140,39 @@ class StateManager:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS lead_inbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    contact TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT '',
+                    channel TEXT NOT NULL DEFAULT 'social',
+                    destination TEXT NOT NULL DEFAULT '',
+                    travel_dates TEXT NOT NULL DEFAULT '',
+                    travellers TEXT NOT NULL DEFAULT '',
+                    budget REAL NOT NULL DEFAULT 0,
+                    contact_consent INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'new',
+                    next_follow_up TEXT NOT NULL DEFAULT '',
+                    latest_draft TEXT NOT NULL DEFAULT '',
+                    draft_status TEXT NOT NULL DEFAULT 'none',
+                    approved_at TEXT NOT NULL DEFAULT '',
+                    sent_at TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS lead_activity (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lead_id INTEGER NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    activity_type TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '',
+                    next_follow_up TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(lead_id) REFERENCES lead_inbox(id)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS opportunities (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -483,6 +516,118 @@ class StateManager:
         with sqlite3.connect(self.DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
             return [dict(r) for r in conn.execute("SELECT * FROM user_goals WHERE active=1 ORDER BY id")]
+
+    def add_lead(self, *, name: str, contact: str = "", source: str = "",
+                 channel: str = "social", destination: str = "", travel_dates: str = "",
+                 travellers: str = "", budget: float = 0, contact_consent: bool = False,
+                 next_follow_up: str = "") -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            cur = conn.execute("""INSERT INTO lead_inbox
+                (created_at,name,contact,source,channel,destination,travel_dates,travellers,
+                 budget,contact_consent,next_follow_up,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (now,name.strip(),contact.strip(),source,channel,destination,travel_dates,
+                 travellers,max(float(budget),0),int(contact_consent),next_follow_up,now))
+            lead_id = int(cur.lastrowid)
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes) VALUES (?,?,?,?)",
+                         (lead_id,now,"lead_captured",f"Captured from {source or 'unspecified source'}"))
+            conn.commit()
+        return lead_id
+
+    def get_lead(self, lead_id: int) -> dict | None:
+        with sqlite3.connect(self.DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM lead_inbox WHERE id=?", (lead_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_leads(self, *, due_on: str | None = None, limit: int = 500) -> list[dict]:
+        query = "SELECT * FROM lead_inbox"
+        args: list[Any] = []
+        if due_on:
+            query += " WHERE next_follow_up<>'' AND next_follow_up<=? AND status NOT IN ('booked','lost')"
+            args.append(due_on)
+        query += " ORDER BY CASE WHEN next_follow_up='' THEN 1 ELSE 0 END, next_follow_up, updated_at DESC LIMIT ?"
+        args.append(limit)
+        with sqlite3.connect(self.DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(r) for r in conn.execute(query, args)]
+
+    def save_lead_draft(self, lead_id: int, message: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            lead = conn.execute("SELECT contact_consent FROM lead_inbox WHERE id=?", (lead_id,)).fetchone()
+            if not lead:
+                raise ValueError(f"Lead #{lead_id} not found")
+            if not lead[0]:
+                raise ValueError("Contact permission is not recorded; do not draft outbound marketing for this lead")
+            conn.execute("UPDATE lead_inbox SET latest_draft=?, draft_status='pending', approved_at='', updated_at=? WHERE id=?",
+                         (message,now,lead_id))
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes) VALUES (?,?,?,?)",
+                         (lead_id,now,"draft_created", "Message draft created; awaiting user approval"))
+            conn.commit()
+
+    def approve_lead_draft(self, lead_id: int) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            lead = conn.execute("SELECT latest_draft,contact_consent,draft_status FROM lead_inbox WHERE id=?", (lead_id,)).fetchone()
+            if not lead:
+                raise ValueError(f"Lead #{lead_id} not found")
+            if not lead[0] or lead[2] != "pending":
+                raise ValueError("There is no pending message draft to approve")
+            if not lead[1]:
+                raise ValueError("Contact permission is not recorded")
+            conn.execute("UPDATE lead_inbox SET draft_status='approved',approved_at=?,updated_at=? WHERE id=?",
+                         (now,now,lead_id))
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes) VALUES (?,?,?,?)",
+                         (lead_id,now,"draft_approved","User approved message draft"))
+            conn.commit()
+
+    def set_lead_consent(self, lead_id: int, allowed: bool) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            lead = conn.execute("SELECT 1 FROM lead_inbox WHERE id=?", (lead_id,)).fetchone()
+            if not lead:
+                raise ValueError(f"Lead #{lead_id} not found")
+            if allowed:
+                conn.execute("UPDATE lead_inbox SET contact_consent=1,updated_at=? WHERE id=?", (now,lead_id))
+            else:
+                conn.execute("UPDATE lead_inbox SET contact_consent=0,draft_status='revoked',approved_at='',updated_at=? WHERE id=?", (now,lead_id))
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes) VALUES (?,?,?,?)",
+                         (lead_id,now,"consent_updated","Contact permission recorded" if allowed else "Contact permission withdrawn; approved drafts must not be sent"))
+            conn.commit()
+
+    def log_lead_activity(self, lead_id: int, activity_type: str, notes: str = "",
+                          next_follow_up: str = "", status: str | None = None) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        if status is not None and status not in {"new","qualified","quoted","booked","lost"}:
+            raise ValueError("Invalid lead status")
+        with sqlite3.connect(self.DB_PATH) as conn:
+            if not conn.execute("SELECT 1 FROM lead_inbox WHERE id=?", (lead_id,)).fetchone():
+                raise ValueError(f"Lead #{lead_id} not found")
+            if status is None:
+                conn.execute("UPDATE lead_inbox SET next_follow_up=?,updated_at=? WHERE id=?",
+                             (next_follow_up,now,lead_id))
+            else:
+                conn.execute("UPDATE lead_inbox SET status=?,next_follow_up=?,updated_at=? WHERE id=?",
+                             (status,next_follow_up,now,lead_id))
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes,next_follow_up) VALUES (?,?,?,?,?)",
+                         (lead_id,now,activity_type,notes,next_follow_up))
+            conn.commit()
+
+    def mark_lead_message_sent(self, lead_id: int, next_follow_up: str = "") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            lead = conn.execute("SELECT draft_status,contact_consent FROM lead_inbox WHERE id=?", (lead_id,)).fetchone()
+            if not lead:
+                raise ValueError(f"Lead #{lead_id} not found")
+            if lead[0] != "approved" or not lead[1]:
+                raise ValueError("Only an approved draft for a lead with recorded contact permission can be marked sent")
+            conn.execute("UPDATE lead_inbox SET draft_status='sent',sent_at=?,next_follow_up=?,updated_at=? WHERE id=?",
+                         (now,next_follow_up,now,lead_id))
+            conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes,next_follow_up) VALUES (?,?,?,?,?)",
+                         (lead_id,now,"message_sent","User marked approved message as sent manually",next_follow_up))
+            conn.commit()
 
     def wealth_metrics(self, state: FinancialState | None = None) -> dict[str, Any]:
         """Separate recorded receipts, pipeline, costs and profit; projections stay out."""

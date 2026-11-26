@@ -71,6 +71,28 @@ class WealthProgressTests(unittest.TestCase):
         self.assertIn("follow up with a buyer", prompt)
         self.assertIn("Paystack sync needs attention", prompt)
 
+    def test_lead_requires_recorded_permission_for_draft(self):
+        lead_id = self.manager.add_lead(name="Ayo", destination="Accra", contact_consent=False)
+        with self.assertRaises(ValueError):
+            self.manager.save_lead_draft(lead_id, "Hello")
+
+    def test_lead_draft_requires_explicit_approval_before_marking_sent(self):
+        lead_id = self.manager.add_lead(name="Ada", destination="Lagos", contact_consent=True,
+                                        next_follow_up="2026-01-02")
+        self.manager.save_lead_draft(lead_id, "Hello Ada")
+        with self.assertRaises(ValueError):
+            self.manager.mark_lead_message_sent(lead_id)
+        self.manager.approve_lead_draft(lead_id)
+        self.manager.set_lead_consent(lead_id, False)
+        with self.assertRaises(ValueError):
+            self.manager.mark_lead_message_sent(lead_id)
+        self.manager.set_lead_consent(lead_id, True)
+        self.manager.save_lead_draft(lead_id, "Updated hello")
+        self.manager.approve_lead_draft(lead_id)
+        self.manager.mark_lead_message_sent(lead_id, "2026-01-02")
+        self.assertEqual(self.manager.get_lead(lead_id)["draft_status"], "sent")
+        self.assertEqual(len(self.manager.list_leads(due_on="2026-01-02")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
