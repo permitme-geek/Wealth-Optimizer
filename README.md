@@ -43,3 +43,5 @@ python -m unittest discover -s tests -v
 Daily app-related inflows count successful Paystack business payments. Sales receipts must match an imported Paystack transaction reference and amount. Paystack success records do not independently establish later bank settlement.
 
 Re-enter or replace the Paystack key with `python cli.py paystack-setup`; input is hidden and the key is not printed. Mono authentication and connector files have been removed.
+
+Configure and verify daily email delivery with `python cli.py email-setup` and `python cli.py email-test`. SMTP credentials are collected through hidden prompts and saved locally in `.env`.

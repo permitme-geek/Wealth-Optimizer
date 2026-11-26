@@ -25,6 +25,15 @@ python cli.py wealth
 python cli.py receipt-candidates
 ```
 
+Enable email notifications without repeating the full onboarding flow:
+
+```bash
+python cli.py email-setup
+python cli.py email-test
+```
+
+Use an SMTP app password rather than your normal email password. Gmail commonly uses `smtp.gmail.com:587`; Outlook commonly uses `smtp-mail.outlook.com:587`. Port 587 uses STARTTLS and port 465 uses SSL. The password is hidden during entry and stored in `.env` with owner-only permissions.
+
 ## Daily reports
 
 ```bash

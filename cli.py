@@ -114,6 +114,39 @@ def paystack_setup():
     console.print("[green]Paystack key saved locally. Run `python cli.py sync` to validate it and import successful payments.[/green]")
 
 
+@app.command("email-setup")
+def email_setup():
+    """Configure SMTP email delivery using hidden local credential prompts."""
+    recipient = typer.prompt("Email address to receive daily briefs")
+    host = typer.prompt("SMTP host (Gmail: smtp.gmail.com; Outlook: smtp-mail.outlook.com)")
+    port = typer.prompt("SMTP port (587 STARTTLS or 465 SSL)", type=int, default=587)
+    username = typer.prompt("SMTP username", default=recipient)
+    password = typer.prompt("SMTP app password", hide_input=True, confirmation_prompt=True)
+    if not recipient.strip() or not host.strip() or not username.strip() or not password:
+        raise typer.BadParameter("Recipient, SMTP host, username and app password are required")
+    if port not in {465, 587}:
+        raise typer.BadParameter("Use SMTP port 587 (STARTTLS) or 465 (SSL)")
+    _write_env_values({"REPORT_EMAIL_TO": recipient.strip(), "SMTP_HOST": host.strip(),
+                       "SMTP_PORT": str(port), "SMTP_USERNAME": username.strip(),
+                       "SMTP_PASSWORD": password})
+    console.print("[green]Email settings saved in the local owner-only .env file. Run `python cli.py email-test` to verify delivery.[/green]")
+
+
+@app.command("email-test")
+def email_test():
+    """Send a brief test email using the configured SMTP settings."""
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+    recipient = os.getenv("REPORT_EMAIL_TO", "").strip()
+    if not recipient or not os.getenv("SMTP_HOST"):
+        raise typer.BadParameter("Run `python cli.py email-setup` first")
+    try:
+        _email_daily_brief("WealthOS email delivery is working. Your scheduled daily wealth brief will be sent at 8:00 AM.")
+    except Exception as exc:
+        raise typer.BadParameter(f"SMTP delivery failed: {exc}") from exc
+    console.print(f"[green]Test email sent to {recipient}.[/green]")
+
+
 @app.command()
 def setup():
     """Start with a wealth assessment, then personalize only the missing targets and data."""
@@ -796,8 +829,11 @@ def _email_daily_brief(brief: str) -> None:
     msg["From"] = os.getenv("SMTP_USERNAME", recipient)
     msg["To"] = recipient
     msg.set_content(brief)
-    with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=20) as server:
-        server.starttls()
+    port = int(os.getenv("SMTP_PORT", "587"))
+    server_class = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+    with server_class(host, port, timeout=20) as server:
+        if port != 465:
+            server.starttls()
         user = os.getenv("SMTP_USERNAME", "")
         password = os.getenv("SMTP_PASSWORD", "")
         if user:
