@@ -759,7 +759,7 @@ def daily_report():
              f"Current balance/net worth: {naira(state.total_net_worth)}",
              f"Bank cash balance (opening for this report): {naira(state.hysa_balance)}",
              f"Bank cash change since previous report: {naira(bank_delta)}",
-             f"Previous reported close: {naira(prev[2]) if prev else 'No prior daily close'}",
+             f"Previous reported close: {naira(prev[1]) if prev else 'No prior daily close'}",
              f"Change since previous report: {naira(delta)}",
              f"Verified account income this month: {naira(metrics['received_month'])}",
              f"Today's verified revenue: {naira(metrics['daily_received'])} / {naira(metrics['daily_revenue_target'])} target (3.5% of monthly KPI)",
@@ -781,10 +781,13 @@ def daily_report():
     if active:
         active.sort(key=lambda o: (o["next_follow_up"] or "9999-99-99", -o["quoted_amount"]))
         lines.extend(f"- Follow up #{o['id']} with {o['customer']} about {o['offer']} ({naira(o['quoted_amount'])}); resolve their main objection and set a decision date." for o in active[:3])
+        top_action = f"follow up with {active[0]['customer']} about {active[0]['offer']}"
     elif profile.get("offers") or profile.get("skills"):
         lines.append(f"- Offer {profile['offers'] or profile['skills']} to {profile.get('target_customers') or 'a focused buyer segment'} through {profile.get('preferred_channels') or 'your strongest channel'}; pursue sales totaling {naira(daily_gap)} and log each result.")
+        top_action = f"offer {profile['offers'] or profile['skills']} to {profile.get('target_customers') or 'a focused buyer segment'}"
     else:
         lines.append("- Complete `python cli.py wealth-profile` and add one concrete offer and buyer segment.")
+        top_action = "complete your wealth profile and define one concrete paid offer"
     brief = "\n".join(lines)
     console.print(Panel(brief, title="Daily Wealth Brief", border_style="cyan"))
     outdir = Path(__file__).resolve().parent / "reports"
@@ -795,6 +798,11 @@ def daily_report():
         _email_daily_brief(brief)
     except Exception as exc:
         console.print(f"[yellow]Email delivery failed: {exc}. The brief remains in reports/daily.log.[/yellow]")
+    sync_failed = any("failed" in msg.lower() for msg in sync_messages)
+    voice = _daily_voice_prompt(profile.get("display_name") or "there",
+        metrics["daily_received"], metrics["daily_revenue_target"], top_action, sync_failed)
+    if _speak_daily_progress(voice):
+        console.print("[green]Spoken progress reminder delivered.[/green]")
 
 
 def _email_daily_brief(brief: str) -> None:
@@ -816,6 +824,32 @@ def _email_daily_brief(brief: str) -> None:
         if user:
             server.login(user, password)
         server.send_message(msg)
+
+
+def _daily_voice_prompt(name: str, daily_received: float, daily_target: float,
+                        action: str, sync_failed: bool = False) -> str:
+    achieved = min(daily_received / daily_target, 1.0) if daily_target > 0 else 0.0
+    message = (f"Good morning, {name}. Your WealthOS progress brief is ready. "
+               f"Today's verified revenue is {daily_received:,.0f} naira against a "
+               f"{daily_target:,.0f} naira target, {achieved:.0%} achieved. "
+               f"Your next priority is: {action}.")
+    if sync_failed:
+        message += " Account sync needs attention. Check your Mono account ID and Paystack API key before acting on stale figures."
+    return message
+
+
+def _speak_daily_progress(message: str) -> bool:
+    """Speak a short reminder on macOS when voice reminders are enabled."""
+    if os.getenv("VOICE_REMINDERS", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    if sys.platform != "darwin":
+        return False
+    try:
+        subprocess.run(["say", message], check=True, timeout=45,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 @app.command("daily-schedule")

@@ -15,6 +15,8 @@ python cli.py daily-report
 - Added a daily revenue KPI equal to **3.5% of the monthly revenue goal**. For a ₦1,000,000 monthly target, the daily KPI is ₦35,000. The dashboard and daily brief show verified credited revenue, monthly progress, and the remaining daily target gap. This is a tracking goal, not an earnings promise.
 - Added daily balance carry-forward. Each brief saves a dated net-worth and bank-cash snapshot and compares it with the previous report.
 - Added a personalized daily brief with goal progress, verified receipts, outstanding receivables, current rating, and highest-priority sales actions.
+- Added a macOS spoken reminder at the scheduled brief time. It announces verified revenue versus the daily target, achievement percentage, the next action, and any account-sync failure. Set `VOICE_REMINDERS=false` in `.env` to disable speech.
+- The app coordinates these steps with a deterministic wealth-intelligence rules engine. It does not currently use a generative AI model or independently execute sales actions.
 - Added optional email delivery through user-configured SMTP, alongside the terminal report log.
 - Added tests for starting baselines, daily carry-forward, receipt validation, transfer exclusion, and the 3.5% KPI.
 

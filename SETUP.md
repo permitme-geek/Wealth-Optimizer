@@ -130,6 +130,8 @@ python cli.py receipt-candidates # list synced business credits available to ver
 
 `setup` stores optional Mono/Paystack credentials and SMTP credentials in `.env` with owner-only file permissions. The first saved balances become the starting baseline. You can add more goals with `goal-add`, and edit the monetisation profile with `wealth-profile`. The daily brief carries forward the last report's closing net worth, records today's balance snapshot, and shows the change, current wealth progress, goals and highest-priority actions. On macOS, `daily-schedule` installs and loads a LaunchAgent for 8:00 AM system-local time. It appends terminal output to `reports/daily.log`; when SMTP is configured, it emails the same brief. Set up SMTP details during onboarding to enable delivery to both destinations. Set the Mac's timezone to the desired report timezone before installing the schedule.
 
+On macOS, voice reminders are enabled by default (`VOICE_REMINDERS=true`). The daily brief speaks verified revenue versus the daily KPI, achievement percentage and the next action; it also calls out account sync failures. Set `VOICE_REMINDERS=false` in `.env` to turn off speech. WealthOS uses a deterministic rules engine to coordinate recorded financial data, goals and recommendations; it does not use a generative AI model or autonomously perform outreach.
+
 The default revenue KPI is **3.5% of the monthly revenue target per day**. For example, a ₦1,000,000 monthly target yields a ₦35,000 daily target. The dashboard and daily brief show actual synced account credits against that KPI, the shortfall, monthly progress, and a next action. The KPI is a tracking target, not a promise of earnings.
 
 ## Wealth and Sales Tracking

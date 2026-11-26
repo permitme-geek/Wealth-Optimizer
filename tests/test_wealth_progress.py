@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from state.manager import FinancialState, StateManager
+from cli import _daily_voice_prompt
 
 
 class WealthProgressTests(unittest.TestCase):
@@ -63,6 +64,12 @@ class WealthProgressTests(unittest.TestCase):
                 os.environ.pop("MONTHLY_INCOME_TARGET", None)
             else:
                 os.environ["MONTHLY_INCOME_TARGET"] = previous
+
+    def test_voice_prompt_reports_target_achievement_and_sync_errors(self):
+        prompt = _daily_voice_prompt("Ayo", 17_500, 35_000, "follow up with a buyer", True)
+        self.assertIn("50% achieved", prompt)
+        self.assertIn("follow up with a buyer", prompt)
+        self.assertIn("Account sync needs attention", prompt)
 
 
 if __name__ == "__main__":
