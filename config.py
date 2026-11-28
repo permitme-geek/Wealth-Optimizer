@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     whatsapp_phone_number_id: str = Field(default="", description="WhatsApp Business phone number ID")
     whatsapp_business_account_id: str = Field(default="", description="WhatsApp Business Account ID")
     whatsapp_api_version: str = "v27.0"
+    whatsapp_app_secret: str = Field(default="", description="Meta app secret for webhook signature validation")
+    whatsapp_webhook_verify_token: str = Field(default="", description="Meta webhook verification token")
 
     # ── Personal financial parameters ─────────────────────────
     hysa_yield_rate: float           = 0.105

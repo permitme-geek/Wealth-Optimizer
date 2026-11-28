@@ -33,3 +33,28 @@ class WhatsAppCloudAPI:
         )
         response.raise_for_status()
         return response.json()
+
+    def list_templates(self) -> list[dict]:
+        response = httpx.get(
+            f"{self.base}/{settings.whatsapp_business_account_id}/message_templates",
+            headers=self.headers,
+            params={"fields": "name,status,category,language,components", "limit": 100},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("data", [])
+
+    def submit_template(self, *, name: str, category: str, body: str,
+                        language: str = "en_US") -> dict:
+        response = httpx.post(
+            f"{self.base}/{settings.whatsapp_business_account_id}/message_templates",
+            headers={**self.headers, "Content-Type": "application/json"},
+            json={"name": name, "category": category,
+                  "allow_category_change": True,
+                  "language": language,
+                  "components": [{"type": "BODY", "text": body,
+                                  "example": {"body_text": [["Ayo", "Accra"]]}}]},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()

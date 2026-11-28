@@ -34,7 +34,34 @@ python cli.py whatsapp-setup
 python cli.py whatsapp-test
 ```
 
-The access token is entered hidden and saved in `.env` with owner-only permissions. The test command only reads the configured business phone-number details; it does not send a customer message. Outbound messages are not enabled in this connection step. Non-template messages are limited to an open 24-hour customer-service window after a customer message; proactive outreach requires an approved message template. Receiving replies also needs a public HTTPS webhook, which is the next integration step.
+The access token and app secret are entered hidden and saved in `.env` with owner-only permissions. The setup command also creates a webhook verification token; save the displayed value for the Meta dashboard. The test command only reads the configured business phone-number details; it does not send a customer message.
+
+### Receive replies through the webhook
+
+The receiver is implemented at `/webhooks/whatsapp`. It answers Meta's GET subscription challenge and verifies POST event signatures using the Meta app secret before saving inbound messages. Start it locally with:
+
+```bash
+python cli.py whatsapp-webhook
+```
+
+This listens on `127.0.0.1:8765`. Meta cannot reach a loopback address: deploy this app behind a stable public HTTPS host/reverse proxy and forward the route `/webhooks/whatsapp` to port `8765`. Keep the webhook secret in the host's secret store (or its protected `.env`), and expose only HTTPS. In Meta App Dashboard → WhatsApp → Configuration, set the callback URL to `https://YOUR_HOST/webhooks/whatsapp`, enter the verification token printed by `whatsapp-setup`, verify, and subscribe to the `messages` webhook field. Then send a test message to the connected WhatsApp Business number and inspect it with:
+
+```bash
+python cli.py whatsapp-inbox
+```
+
+### Submit proactive message templates
+
+Three marketing template drafts are included. Submit a draft after confirming the wording and that the intended recipients opted in:
+
+```bash
+python cli.py whatsapp-template-submit trip_enquiry
+python cli.py whatsapp-template-submit quote_followup
+python cli.py whatsapp-template-submit repeat_booking
+python cli.py whatsapp-templates
+```
+
+Meta reviews templates on the connected WABA. A submission can remain pending or be rejected; check its returned status and review it in Meta before use. This integration does not send proactive messages. Free-form messages are available only during the 24-hour customer-service window after the customer messages you; outside that window, use an approved template. Honor opt-outs and only contact people who gave permission.
 
 Enable email notifications without repeating the full onboarding flow:
 

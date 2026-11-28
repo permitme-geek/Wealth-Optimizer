@@ -5,7 +5,7 @@ Persists to SQLite so state survives between CLI runs.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import json, sqlite3, os
 from pathlib import Path
@@ -170,6 +170,19 @@ class StateManager:
                     notes TEXT NOT NULL DEFAULT '',
                     next_follow_up TEXT NOT NULL DEFAULT '',
                     FOREIGN KEY(lead_id) REFERENCES lead_inbox(id)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_messages (
+                    event_key TEXT PRIMARY KEY,
+                    message_id TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    contact TEXT NOT NULL DEFAULT '',
+                    message_text TEXT NOT NULL DEFAULT '',
+                    message_type TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT '',
+                    occurred_at TEXT NOT NULL,
+                    received_at TEXT NOT NULL
                 )
             """)
             conn.execute("""
@@ -628,6 +641,65 @@ class StateManager:
             conn.execute("INSERT INTO lead_activity (lead_id,occurred_at,activity_type,notes,next_follow_up) VALUES (?,?,?,?,?)",
                          (lead_id,now,"message_sent","User marked approved message as sent manually",next_follow_up))
             conn.commit()
+
+    def save_whatsapp_webhook(self, payload: dict) -> int:
+        """Persist inbound messages/statuses idempotently; never auto-reply."""
+        saved = 0
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(self.DB_PATH) as conn:
+            for entry in payload.get("entry", []):
+                for change in entry.get("changes", []):
+                    value = change.get("value", {})
+                    for msg in value.get("messages", []):
+                        mid = msg.get("id", "")
+                        if not mid:
+                            continue
+                        body = msg.get("text", {}).get("body", "")
+                        if msg.get("type") == "button":
+                            body = msg.get("button", {}).get("text", body)
+                        if msg.get("type") == "interactive":
+                            interactive = msg.get("interactive", {})
+                            body = (interactive.get("button_reply", {}).get("title") or
+                                    interactive.get("list_reply", {}).get("title") or body)
+                        ts = datetime.fromtimestamp(int(msg.get("timestamp", "0")), timezone.utc).isoformat()
+                        cur = conn.execute("""INSERT OR IGNORE INTO whatsapp_messages
+                            (event_key,message_id,direction,contact,message_text,message_type,status,occurred_at,received_at)
+                            VALUES (?,?, 'inbound', ?, ?, ?, 'received', ?, ?)""",
+                            (mid,mid,msg.get("from", ""),body,msg.get("type", ""),ts,now))
+                        saved += cur.rowcount
+                    for status in value.get("statuses", []):
+                        mid = status.get("id", "")
+                        st = status.get("status", "")
+                        ts = datetime.fromtimestamp(int(status.get("timestamp", "0")), timezone.utc).isoformat()
+                        key = f"{mid}:{st}:{status.get('timestamp','')}"
+                        cur = conn.execute("""INSERT OR IGNORE INTO whatsapp_messages
+                            (event_key,message_id,direction,contact,status,occurred_at,received_at)
+                            VALUES (?,?,'status',?,?,?,?)""",
+                            (key,mid,status.get("recipient_id", ""),st,ts,now))
+                        saved += cur.rowcount
+            conn.commit()
+        return saved
+
+    def list_whatsapp_messages(self, limit: int = 100) -> list[dict]:
+        with sqlite3.connect(self.DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""SELECT * FROM whatsapp_messages
+                WHERE direction='inbound' ORDER BY occurred_at DESC LIMIT ?""", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def whatsapp_window_open(self, phone: str, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        with sqlite3.connect(self.DB_PATH) as conn:
+            row = conn.execute("""SELECT occurred_at FROM whatsapp_messages
+                WHERE direction='inbound' AND contact=? ORDER BY occurred_at DESC LIMIT 1""",
+                (phone,)).fetchone()
+        if not row:
+            return False
+        try:
+            last = datetime.fromisoformat(row[0])
+            return now - last <= timedelta(hours=24)
+        except (TypeError, ValueError):
+            return False
 
     def wealth_metrics(self, state: FinancialState | None = None) -> dict[str, Any]:
         """Separate recorded receipts, pipeline, costs and profit; projections stay out."""

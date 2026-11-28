@@ -24,6 +24,7 @@ import os
 import plistlib
 import sys
 import subprocess
+import secrets
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -153,14 +154,19 @@ def whatsapp_setup():
     token = typer.prompt("Meta WhatsApp access token", hide_input=True, confirmation_prompt=True)
     phone_id = typer.prompt("WhatsApp Business phone-number ID")
     business_id = typer.prompt("WhatsApp Business Account ID (WABA ID)")
-    if not token.strip() or not phone_id.strip() or not business_id.strip():
-        raise typer.BadParameter("Access token, phone-number ID and WABA ID are required")
+    app_secret = typer.prompt("Meta app secret (needed to validate webhook events)", hide_input=True, confirmation_prompt=True)
+    if not token.strip() or not phone_id.strip() or not business_id.strip() or not app_secret.strip():
+        raise typer.BadParameter("Access token, phone-number ID, WABA ID and app secret are required")
     version = os.getenv("WHATSAPP_API_VERSION", "v27.0")
+    verify_token = os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "") or secrets.token_urlsafe(32)
     _write_env_values({"WHATSAPP_ACCESS_TOKEN": token.strip(),
         "WHATSAPP_PHONE_NUMBER_ID": phone_id.strip(),
         "WHATSAPP_BUSINESS_ACCOUNT_ID": business_id.strip(),
+        "WHATSAPP_APP_SECRET": app_secret.strip(),
+        "WHATSAPP_WEBHOOK_VERIFY_TOKEN": verify_token,
         "WHATSAPP_API_VERSION": version})
     console.print("[green]WhatsApp credentials saved locally. Run `python cli.py whatsapp-test` to validate the connection.[/green]")
+    console.print(f"Webhook verify token for the Meta dashboard: {verify_token}")
 
 
 @app.command("whatsapp-test")
@@ -183,6 +189,75 @@ def whatsapp_test():
         f"Platform: {info.get('platform_type', 'unavailable')}\n"
         "Connection validated. No customer message was sent.",
         title="WhatsApp Business Connected", border_style="green"))
+
+
+@app.command("whatsapp-webhook")
+def whatsapp_webhook(host: str = typer.Option("127.0.0.1", help="Bind address"),
+                     port: int = typer.Option(8765, min=1, max=65535)):
+    """Run the inbound webhook app locally; expose it through a stable public HTTPS host."""
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+    import uvicorn
+    if not os.getenv("WHATSAPP_APP_SECRET") or not os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN"):
+        raise typer.BadParameter("Run `python cli.py whatsapp-setup` first")
+    console.print(f"Webhook listening at http://{host}:{port}/webhooks/whatsapp")
+    console.print("Use a stable public HTTPS reverse proxy/tunnel and set its callback URL in Meta.")
+    uvicorn.run("api.whatsapp_webhook:app", host=host, port=port, log_level="info")
+
+
+@app.command("whatsapp-inbox")
+def whatsapp_inbox(limit: int = typer.Option(100, min=1, max=500)):
+    """Review inbound WhatsApp replies captured by the signed webhook."""
+    from state.manager import state_manager
+    rows = state_manager.list_whatsapp_messages(limit)
+    table = Table(title="Inbound WhatsApp Replies", box=box.ROUNDED)
+    for col in ("Received", "Phone", "Message", "Type"):
+        table.add_column(col)
+    for row in rows:
+        table.add_row(row["occurred_at"][:19].replace("T", " "), row["contact"],
+                      row["message_text"], row["message_type"])
+    console.print(table)
+    if not rows:
+        console.print("No inbound replies captured yet.")
+
+
+@app.command("whatsapp-templates")
+def whatsapp_templates():
+    """List WhatsApp templates and their Meta review status."""
+    from connectors.whatsapp import WhatsAppCloudAPI
+    try:
+        rows = WhatsAppCloudAPI().list_templates()
+    except Exception as exc:
+        raise typer.BadParameter(f"Could not list WhatsApp templates: {exc}") from exc
+    table = Table(title="WhatsApp Message Templates", box=box.ROUNDED)
+    for col in ("Name", "Status", "Category", "Language"):
+        table.add_column(col)
+    for row in rows:
+        table.add_row(row.get("name", ""), row.get("status", ""), row.get("category", ""), row.get("language", ""))
+    console.print(table)
+
+
+@app.command("whatsapp-template-submit")
+def whatsapp_template_submit(kind: str = typer.Argument(..., help="quote_followup, trip_enquiry, or repeat_booking")):
+    """Submit a proposed marketing template to Meta; it is not sendable until Meta approves it."""
+    from connectors.whatsapp import WhatsAppCloudAPI
+    templates = {
+        "quote_followup": ("wealthos_quote_followup", "Hi {{1}}, you asked us for a travel quote for {{2}}. Would you like us to resend the current options? Reply STOP to opt out."),
+        "trip_enquiry": ("wealthos_trip_enquiry", "Hi {{1}}, you asked about travelling to {{2}}. Would you like us to prepare flight and accommodation options for your dates? Reply STOP to opt out."),
+        "repeat_booking": ("wealthos_repeat_booking", "Hi {{1}}, thank you for booking with us before. Are you planning another trip to {{2}}? Reply STOP to opt out."),
+    }
+    if kind not in templates:
+        raise typer.BadParameter("Choose quote_followup, trip_enquiry, or repeat_booking")
+    name, body = templates[kind]
+    console.print(Panel(body, title=f"Proposed template: {name} — MARKETING", border_style="yellow"))
+    if not typer.confirm("Submit this template to Meta for review?", default=False):
+        console.print("Nothing submitted.")
+        return
+    try:
+        response = WhatsAppCloudAPI().submit_template(name=name, category="MARKETING", body=body)
+    except Exception as exc:
+        raise typer.BadParameter(f"Template submission failed: {exc}") from exc
+    console.print(f"Template submitted. Meta status: {response.get('status', 'pending review')}. Check with `python cli.py whatsapp-templates` before using it.")
 
 
 @app.command()

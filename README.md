@@ -9,7 +9,7 @@ python cli.py wealth
 python cli.py daily-report
 ```
 
-## Changes made today — 25 November 2026
+## Changes made today — 28 November 2026
 
 - Reworked `setup` to show a starting wealth assessment and initial recommendation before collecting the user's details. Existing balances and profile values are used as defaults; setup asks for a compact aggregate investment balance rather than requiring separate manual entry for every asset class.
 - Added a daily revenue KPI equal to **3.5% of the monthly revenue goal**. For a ₦1,000,000 monthly target, the daily KPI is ₦35,000. The dashboard and daily brief show verified credited revenue, monthly progress, and the remaining daily target gap. This is a tracking goal, not an earnings promise.
@@ -19,6 +19,8 @@ python cli.py daily-report
 - The app coordinates these steps with a deterministic wealth-intelligence rules engine. It does not currently use a generative AI model or independently execute sales actions.
 - Added optional email delivery through user-configured SMTP, alongside the terminal report log.
 - Added tests for starting baselines, daily carry-forward, receipt validation, transfer exclusion, and the 3.5% KPI.
+- Added a signed WhatsApp Cloud API webhook that verifies Meta subscriptions and event signatures, stores inbound replies, and exposes them through `whatsapp-inbox`.
+- Added WhatsApp connection checks and commands to submit three opt-in marketing template drafts to Meta and inspect their review status. Submission is not approval; Meta must approve each template before proactive use.
 
 ## What to expect tomorrow
 
@@ -42,6 +44,10 @@ python cli.py lead-approve 1   # approve a draft for manual sending
 python cli.py lead-followups   # review due follow-ups
 python cli.py whatsapp-setup   # save WhatsApp Cloud API credentials securely
 python cli.py whatsapp-test    # validate the business phone-number connection
+python cli.py whatsapp-webhook # start inbound webhook locally on port 8765
+python cli.py whatsapp-inbox   # review captured inbound replies
+python cli.py whatsapp-template-submit trip_enquiry # submit a draft for Meta review
+python cli.py whatsapp-templates # inspect template review status
 python cli.py receipt-candidates # list Paystack inflows eligible for receipt matching
 python cli.py goal-add         # add a measurable wealth goal
 python -m unittest discover -s tests -v
@@ -52,3 +58,5 @@ Daily app-related inflows count successful Paystack business payments. Sales rec
 Re-enter or replace the Paystack key with `python cli.py paystack-setup`; input is hidden and the key is not printed. Mono authentication and connector files have been removed.
 
 Configure and verify daily email delivery with `python cli.py email-setup` and `python cli.py email-test`. SMTP credentials are collected through hidden prompts and saved locally in `.env`.
+
+See [SETUP.md](SETUP.md#whatsapp-business-connection) for WhatsApp credentials, webhook hosting, and template review steps. A public HTTPS host and Meta business credentials are required before Meta can deliver real webhook events. Free-form replies are permitted only inside the 24-hour customer-service window after a customer messages; proactive contact requires an approved template and valid opt-in.
